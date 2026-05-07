@@ -1,0 +1,38 @@
+groups:
+  - name: host-and-container-alerts
+    rules:
+      - alert: PrometheusTargetMissing
+        expr: up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Prometheus target is down
+          description: '{{ $labels.job }} on {{ $labels.instance }} has been unreachable for more than 2 minutes.'
+
+      - alert: HostOutOfMemory
+        expr: (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) < 0.10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Host memory is low
+          description: '{{ $labels.instance }} has less than 10% available memory remaining.'
+
+      - alert: HostDiskAlmostFull
+        expr: (node_filesystem_avail_bytes{fstype!~"tmpfs|fuse.lxcfs|overlay"} / node_filesystem_size_bytes{fstype!~"tmpfs|fuse.lxcfs|overlay"}) < 0.15
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Host disk is nearly full
+          description: '{{ $labels.instance }} mount {{ $labels.mountpoint }} has less than 15% free space remaining.'
+
+      - alert: ContainerHighCpuUsage
+        expr: rate(container_cpu_usage_seconds_total{name!=""}[5m]) > 0.8
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Container CPU usage is elevated
+          description: '{{ $labels.name }} is consuming more than 0.8 CPU cores on average over the last 5 minutes.'

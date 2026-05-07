@@ -1,0 +1,144 @@
+services:
+  prometheus:
+    image: prom/prometheus:v3.11.2
+    container_name: prometheus
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION_TIME:-30d}
+      - --storage.tsdb.wal-compression
+      - --web.console.libraries=/usr/share/prometheus/console_libraries
+      - --web.console.templates=/usr/share/prometheus/consoles
+    ports:
+      - "${PROMETHEUS_PORT:-9999}:9090"
+    volumes:
+      - prometheus_data:/prometheus
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/rules:/etc/prometheus/rules:ro
+    networks:
+      - monitoring
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 1m
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  alertmanager:
+    image: prom/alertmanager:v0.32.0
+    container_name: alertmanager
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/alertmanager/config.yml
+      - --storage.path=/alertmanager
+    expose:
+      - "9093"
+    volumes:
+      - alertmanager_data:/alertmanager
+      - ./alertmanager/config.yml:/etc/alertmanager/config.yml:ro
+    networks:
+      - monitoring
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 1m
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  node-exporter:
+    image: quay.io/prometheus/node-exporter:v1.11.1
+    container_name: node-exporter
+    restart: unless-stopped
+    command:
+      - --path.rootfs=/host
+      - --path.procfs=/host/proc
+      - --path.sysfs=/host/sys
+      - --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc|run/credentials/.+|var/lib/docker/.+|var/lib/containers/storage/.+)($|/)
+    expose:
+      - "9100"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/host:ro,rslave
+    networks:
+      - monitoring
+    pid: host
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.56.2
+    container_name: cadvisor
+    restart: unless-stopped
+    expose:
+      - "8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+      - /dev/disk:/dev/disk:ro
+    devices:
+      - /dev/kmsg:/dev/kmsg
+    privileged: true
+    networks:
+      - monitoring
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  grafana:
+    image: grafana/grafana:13.0.1
+    container_name: grafana
+    user: "472"
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+    ports:
+      - "${GRAFANA_PORT:-8888}:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-change-me-now}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SECURITY_COOKIE_SECURE: ${GRAFANA_COOKIE_SECURE:-false}
+      GF_SECURITY_COOKIE_SAMESITE: strict
+      GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-http://localhost:8888}
+      GF_SERVER_DOMAIN: ${GRAFANA_DOMAIN:-localhost}
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_UNIFIED_ALERTING_ENABLED: "true"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    networks:
+      - monitoring
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+volumes:
+  prometheus_data:
+  grafana_data:
+  alertmanager_data:
+
+networks:
+  monitoring:
+    driver: bridge
