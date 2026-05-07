@@ -12,7 +12,7 @@ Prometheus is in Docker and Rails runs directly on the host.
 
 Docker Desktop example:
 
-Update [prometheus/prometheus.yml](/home/ralampay/monitoring/prometheus/prometheus.yml) in this repository and add a new job:
+Update `prometheus/prometheus.yml` in this repository and add a new job:
 
 ```yaml
   - job_name: rails-api
@@ -22,7 +22,7 @@ Update [prometheus/prometheus.yml](/home/ralampay/monitoring/prometheus/promethe
           - host.docker.internal:3000
 ```
 
-On Linux, add this to the `prometheus` service in [docker-compose.yml](/home/ralampay/monitoring/docker-compose.yml) if you want to use `host.docker.internal`:
+On Linux, add this to the `prometheus` service in `docker-compose.yml` if you want to use `host.docker.internal`:
 
 ```yaml
     extra_hosts:
