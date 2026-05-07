@@ -132,12 +132,6 @@ Add the route:
 get "/metrics", to: "metrics#index"
 ```
 
-If the API is public, restrict access to `/metrics` with one of these approaches:
-
-- Expose it only on a private network
-- Protect it behind a reverse proxy
-- Require basic auth or IP allow-listing
-
 ## 5. Confirm the Rails app exposes metrics
 
 Start the Rails app and check:
@@ -161,7 +155,166 @@ curl http://localhost:3000/api/users/1
 curl http://localhost:3000/metrics
 ```
 
-## 6. Add the Rails app to Prometheus scraping
+## 6. Protect the `/metrics` endpoint
+
+Do not leave `/metrics` publicly accessible unless there is a clear reason to do so. The safest default is to keep it reachable only from Prometheus over a private network.
+
+You have a few common options.
+
+### Option A: Private network only
+
+Expose `/metrics` only on an internal interface, VPN, or private Docker network. In that setup, Prometheus can scrape metrics directly and you do not need HTTP authentication on the endpoint itself.
+
+This is usually the best option when:
+
+- Rails and Prometheus run on the same server
+- Rails and Prometheus run on the same private VPC or subnet
+- Rails runs in Docker on the same Docker network as Prometheus
+
+### Option B: Basic authentication in Rails
+
+For a simple theoretical example, protect `/metrics` with HTTP basic auth in the controller:
+
+```ruby
+class MetricsController < ActionController::API
+  before_action :authenticate!
+
+  def index
+    render plain: Prometheus::Client::Formats::Text.marshal(PROMETHEUS),
+           content_type: "text/plain; version=0.0.4"
+  end
+
+  private
+
+  def authenticate!
+    expected_username = ENV.fetch("PROMETHEUS_METRICS_USERNAME")
+    expected_password = ENV.fetch("PROMETHEUS_METRICS_PASSWORD")
+
+    authenticate_or_request_with_http_basic do |username, password|
+      ActiveSupport::SecurityUtils.secure_compare(username, expected_username) &&
+        ActiveSupport::SecurityUtils.secure_compare(password, expected_password)
+    end
+  end
+end
+```
+
+Then configure Prometheus to send credentials:
+
+```yaml
+  - job_name: rails-api
+    metrics_path: /metrics
+    basic_auth:
+      username: prometheus
+      password: change-me
+    static_configs:
+      - targets:
+          - rails-app.internal:3000
+```
+
+For production, prefer storing the password in an environment variable or secret manager instead of committing it to `prometheus.yml`.
+
+### Option C: Bearer token authentication
+
+If you want a single shared secret instead of username and password, use a bearer token.
+
+Theoretical Rails example:
+
+```ruby
+class MetricsController < ActionController::API
+  before_action :authenticate!
+
+  def index
+    render plain: Prometheus::Client::Formats::Text.marshal(PROMETHEUS),
+           content_type: "text/plain; version=0.0.4"
+  end
+
+  private
+
+  def authenticate!
+    expected_token = ENV.fetch("PROMETHEUS_METRICS_TOKEN")
+    authorization = request.headers["Authorization"].to_s
+
+    provided_token = authorization.delete_prefix("Bearer ").strip
+
+    unless authorization.start_with?("Bearer ") &&
+           ActiveSupport::SecurityUtils.secure_compare(provided_token, expected_token)
+      head :unauthorized
+    end
+  end
+end
+```
+
+Prometheus can send the token inline:
+
+```yaml
+  - job_name: rails-api
+    scheme: https
+    metrics_path: /metrics
+    authorization:
+      type: Bearer
+      credentials: change-me
+    static_configs:
+      - targets:
+          - api.example.com
+```
+
+For production, prefer a file-backed secret:
+
+```yaml
+  - job_name: rails-api
+    scheme: https
+    metrics_path: /metrics
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/secrets/rails_metrics_token
+    static_configs:
+      - targets:
+          - api.example.com
+```
+
+This is usually a better fit than inline credentials because the token stays out of `prometheus.yml` and out of git.
+
+### Option D: Reverse proxy authentication
+
+Another common setup is to leave the Rails controller simple and protect `/metrics` at Nginx, Traefik, or another reverse proxy.
+
+Theoretical Nginx example:
+
+```nginx
+location /metrics {
+    auth_basic "Restricted Metrics";
+    auth_basic_user_file /etc/nginx/.htpasswd;
+    proxy_pass http://127.0.0.1:3000/metrics;
+}
+```
+
+Prometheus still uses `basic_auth` in `prometheus.yml`, but the authentication check happens at the proxy instead of inside Rails.
+
+### Option E: IP allow-listing
+
+If Prometheus comes from a stable private IP, allow only that source to access `/metrics`.
+
+This is often combined with:
+
+- a reverse proxy
+- firewall rules
+- a private subnet
+
+### Which option to choose
+
+- Same host or same private Docker network: prefer private network access
+- Remote scrape over a trusted network: private network plus firewall rules is usually enough
+- Remote scrape over a shared or public path: use bearer token or basic auth over HTTPS
+
+## 7. Add the Rails app to Prometheus scraping
+
+Choose the scrape target based on where Rails is running.
+
+### Rails on the same server, outside Docker
+
+Prometheus is in Docker and Rails runs directly on the host.
+
+Docker Desktop example:
 
 Update [prometheus/prometheus.yml](/home/ralampay/monitoring/prometheus/prometheus.yml) in this repository and add a new job:
 
@@ -173,18 +326,148 @@ Update [prometheus/prometheus.yml](/home/ralampay/monitoring/prometheus/promethe
           - host.docker.internal:3000
 ```
 
-Use the correct target for your deployment:
-
-- If Rails runs on Docker Desktop for macOS or Windows, `host.docker.internal:3000` is usually fine
-- If Rails runs on Linux outside Docker, either expose the host another way or add this to the `prometheus` service in [docker-compose.yml](/home/ralampay/monitoring/docker-compose.yml):
+On Linux, add this to the `prometheus` service in [docker-compose.yml](/home/ralampay/monitoring/docker-compose.yml) if you want to use `host.docker.internal`:
 
 ```yaml
     extra_hosts:
       - "host.docker.internal:host-gateway"
 ```
 
-- If Rails runs in Docker, use the Rails container name and port on the shared Docker network
-- If Rails runs on another host, use that host or private DNS name
+You can also target the host's private IP directly:
+
+```yaml
+  - job_name: rails-api
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - 192.168.1.10:3000
+```
+
+### Rails in Docker on the same server
+
+If Rails is in Docker too, put Rails and Prometheus on the same Docker network and scrape by container or service name:
+
+```yaml
+  - job_name: rails-api
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - rails-app:3000
+```
+
+This is usually the cleanest option because Docker DNS resolves `rails-app` automatically.
+
+If Rails is in a different Compose project, attach both projects to the same external Docker network.
+
+### Rails exposed from a remote server
+
+If Rails is running on another machine, scrape it by private DNS name, hostname, or private IP:
+
+```yaml
+  - job_name: rails-api
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - rails-app.internal:3000
+```
+
+If the endpoint is exposed over HTTPS:
+
+```yaml
+  - job_name: rails-api
+    scheme: https
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - api.example.com
+```
+
+If `/metrics` requires basic auth:
+
+```yaml
+  - job_name: rails-api
+    scheme: https
+    metrics_path: /metrics
+    basic_auth:
+      username: prometheus
+      password: change-me
+    static_configs:
+      - targets:
+          - api.example.com
+```
+
+If `/metrics` requires a bearer token:
+
+```yaml
+  - job_name: rails-api
+    scheme: https
+    metrics_path: /metrics
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/secrets/rails_metrics_token
+    static_configs:
+      - targets:
+          - api.example.com
+```
+
+### Deployment guidance
+
+- Same server, non-Docker Rails: use `host.docker.internal` or the host's private IP
+- Same server, Docker Rails: use the container or service name on a shared Docker network
+- Remote server: prefer private DNS or private IP, and add HTTPS plus bearer token or basic auth if the path is exposed beyond a trusted network
+
+### Using environment variables for targets
+
+If you want to make the scrape target configurable per environment, Prometheus can substitute environment variables in `prometheus.yml`.
+
+Example:
+
+```yaml
+  - job_name: rails-api
+    scheme: https
+    metrics_path: /metrics
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/secrets/rails_metrics_token
+    static_configs:
+      - targets:
+          - ${RAILS_METRICS_TARGET}
+```
+
+Then pass an environment variable into the Prometheus container:
+
+```bash
+RAILS_METRICS_TARGET=api.example.com:443
+```
+
+Important details:
+
+- The target must still be `host:port`, not a full URL
+- `scheme` is configured separately as `http` or `https`
+- If `scheme` is omitted, Prometheus defaults to `http`
+- For one target per environment, an environment variable is usually enough
+- For many dynamic targets, use file-based service discovery instead
+
+The final scrape URL is assembled from:
+
+- `scheme`
+- `targets`
+- `metrics_path`
+
+For example, this configuration:
+
+```yaml
+scheme: https
+metrics_path: /metrics
+targets:
+  - api.example.com:443
+```
+
+results in this scrape URL:
+
+```text
+https://api.example.com:443/metrics
+```
 
 After updating the config, reload the stack:
 
@@ -194,7 +477,7 @@ docker compose up -d
 
 Then open Prometheus at `http://localhost:9999` and verify the `rails-api` target is `UP` under `Status -> Targets`.
 
-## 7. Build Grafana panels
+## 8. Build Grafana panels
 
 Open Grafana at `http://localhost:8888` and create panels using the Prometheus datasource.
 
@@ -256,7 +539,7 @@ sum(rate(http_request_duration_seconds_count[5m]))
 sum by (status) (rate(http_requests_total[5m]))
 ```
 
-## 8. Recommended dashboard panels
+## 9. Recommended dashboard panels
 
 A practical Rails API dashboard usually includes:
 
@@ -269,7 +552,7 @@ A practical Rails API dashboard usually includes:
 - Response count by status code
 - Target health using `up{job="rails-api"}`
 
-## 9. Suggested alerting rules
+## 10. Suggested alerting rules
 
 Add alerts when:
 
@@ -302,7 +585,7 @@ groups:
 
 You can place rules in `prometheus/rules/` and they will be loaded by this stack.
 
-## 10. Common pitfalls
+## 11. Common pitfalls
 
 - Do not label metrics with raw user IDs, emails, tokens, or full query strings
 - Normalize dynamic route segments to avoid cardinality explosions
