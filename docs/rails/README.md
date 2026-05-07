@@ -112,6 +112,57 @@ config.middleware.use PrometheusCollector
 
 If your routes differ, replace those examples with patterns that match your API.
 
+### Measuring requests per endpoint
+
+If you want to measure how many requests the API handles per endpoint, the important part is the `path` label on `http_requests_total`.
+
+Each request should be recorded with a normalized route label such as:
+
+```text
+http_requests_total{method="GET",path="/users/:id",status="200"}
+```
+
+That lets Prometheus group request volume by endpoint instead of by raw URL.
+
+Useful queries:
+
+Requests per endpoint:
+
+```promql
+sum by (path) (rate(http_requests_total[5m]))
+```
+
+Requests per endpoint and method:
+
+```promql
+sum by (method, path) (rate(http_requests_total[5m]))
+```
+
+Top busiest endpoints:
+
+```promql
+topk(10, sum by (path) (rate(http_requests_total[5m])))
+```
+
+`5xx` responses per endpoint:
+
+```promql
+sum by (path) (rate(http_requests_total{status=~"5.."}[5m]))
+```
+
+Do not record raw dynamic URLs like:
+
+- `/users/1`
+- `/users/2`
+- `/orders/10001`
+
+Instead, normalize them into stable route labels such as:
+
+- `/users/:id`
+- `/orders/:id`
+
+If you want an even more stable label, you can record controller and action names or the Rails route template instead of the raw request path.
+
 ## 4. Expose a `/metrics` endpoint
 
 Create a controller at `app/controllers/metrics_controller.rb`:
