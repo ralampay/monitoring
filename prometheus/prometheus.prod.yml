@@ -41,4 +41,4 @@ scrape_configs:
       credentials_file: /tmp/prometheus-app-key
     static_configs:
       - targets:
-          - gorunbunny.com
+          - api.gorunbunny.com
