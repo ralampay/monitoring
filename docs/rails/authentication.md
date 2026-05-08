@@ -19,12 +19,14 @@ This is usually the best option when:
 For a simple theoretical example, protect `/metrics` with HTTP basic auth in the controller:
 
 ```ruby
+require "prometheus/client/formats/text"
+
 class MetricsController < ActionController::API
   before_action :authenticate!
 
   def index
     render plain: Prometheus::Client::Formats::Text.marshal(PROMETHEUS),
-           content_type: "text/plain; version=0.0.4"
+           content_type: Prometheus::Client::Formats::Text::CONTENT_TYPE
   end
 
   private
@@ -63,12 +65,14 @@ If you want a single shared secret instead of username and password, use a beare
 Theoretical Rails example:
 
 ```ruby
+require "prometheus/client/formats/text"
+
 class MetricsController < ActionController::API
   before_action :authenticate!
 
   def index
     render plain: Prometheus::Client::Formats::Text.marshal(PROMETHEUS),
-           content_type: "text/plain; version=0.0.4"
+           content_type: Prometheus::Client::Formats::Text::CONTENT_TYPE
   end
 
   private
@@ -86,6 +90,8 @@ class MetricsController < ActionController::API
   end
 end
 ```
+
+Keep the formatter `require` in the controller or another file that is guaranteed to load before `MetricsController#index`. `require "prometheus/client"` alone is not enough to define `Prometheus::Client::Formats::Text`.
 
 Prometheus can send the token inline:
 

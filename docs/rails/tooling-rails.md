@@ -34,6 +34,7 @@ Create `config/initializers/prometheus.rb` in the Rails app:
 
 ```ruby
 require "prometheus/client"
+require "prometheus/client/formats/text"
 
 PROMETHEUS = Prometheus::Client.registry
 
@@ -100,9 +101,13 @@ end
 Then register it in `config/application.rb`:
 
 ```ruby
+require_relative "../app/middleware/prometheus_collector"
+
 config.autoload_paths << Rails.root.join("app/middleware")
-config.middleware.use PrometheusCollector
+config.middleware.use ::PrometheusCollector
 ```
+
+Using `::PrometheusCollector` avoids Ruby looking for `Runbunnyapi::Application::PrometheusCollector` when `config/application.rb` is evaluated inside the application namespace.
 
 `normalize_path` matters. Without it, IDs and other dynamic URL segments will create high-cardinality metrics that are expensive to store and hard to query.
 
@@ -164,13 +169,17 @@ If you want an even more stable label, you can record controller and action name
 Create a controller at `app/controllers/metrics_controller.rb`:
 
 ```ruby
+require "prometheus/client/formats/text"
+
 class MetricsController < ActionController::API
   def index
     render plain: Prometheus::Client::Formats::Text.marshal(PROMETHEUS),
-           content_type: "text/plain; version=0.0.4"
+           content_type: Prometheus::Client::Formats::Text::CONTENT_TYPE
   end
 end
 ```
+
+The explicit `require` is important. `prometheus-client` does not load `Prometheus::Client::Formats::Text` from `require "prometheus/client"` alone.
 
 Add the route:
 
@@ -182,6 +191,21 @@ get "/metrics", to: "metrics#index"
 ## 5. Confirm the Rails app exposes metrics
 
 Start the Rails app and check:
+
+```bash
+bin/rails server -b 0.0.0.0 -p 3000
+```
+
+Binding Rails to `0.0.0.0` matters when Prometheus runs in Docker and Rails runs directly on the host. If Rails listens only on `127.0.0.1`, the Prometheus container will not be able to reach it through `host.docker.internal` or the Docker host gateway.
+
+If you are testing with Prometheus in Docker and scraping Rails through `host.docker.internal`, allow that host header in development too:
+
+```ruby
+# config/environments/development.rb
+config.hosts << "host.docker.internal"
+```
+
+Then check from the host:
 
 ```bash
 curl http://localhost:3000/metrics
@@ -200,4 +224,10 @@ Then hit the API a few times and check again:
 curl http://localhost:3000/api/users
 curl http://localhost:3000/api/users/1
 curl http://localhost:3000/metrics
+```
+
+If Prometheus is running in Docker, you can verify the same endpoint from inside the container:
+
+```bash
+docker exec -it prometheus wget -qO- http://host.docker.internal:3000/metrics
 ```

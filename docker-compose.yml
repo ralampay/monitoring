@@ -3,18 +3,33 @@ services:
     image: prom/prometheus:v3.11.2
     container_name: prometheus
     restart: unless-stopped
+    entrypoint:
+      - /bin/sh
+      - -ec
     command:
-      - --config.file=/etc/prometheus/prometheus.yml
-      - --storage.tsdb.path=/prometheus
-      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION_TIME:-30d}
-      - --storage.tsdb.wal-compression
-      - --web.console.libraries=/usr/share/prometheus/console_libraries
-      - --web.console.templates=/usr/share/prometheus/consoles
+      - |
+        umask 077
+        token_file=/tmp/runbunny-api-token
+        if [ -z "$${PROMETHEUS_APP_KEY:-}" ]; then
+          echo "PROMETHEUS_APP_KEY is required for runbunny-api scraping" >&2
+          exit 1
+        fi
+        printf '%s' "$${PROMETHEUS_APP_KEY}" > "$$token_file"
+        exec /bin/prometheus \
+          --config.file=/etc/prometheus/prometheus.yml \
+          --storage.tsdb.path=/prometheus \
+          --storage.tsdb.wal-compression \
+          --web.console.libraries=/usr/share/prometheus/console_libraries \
+          --web.console.templates=/usr/share/prometheus/consoles \
+          --storage.tsdb.retention.time="$${PROMETHEUS_RETENTION_TIME}"
+    environment:
+      PROMETHEUS_APP_KEY: ${PROMETHEUS_APP_KEY}
+      PROMETHEUS_RETENTION_TIME: ${PROMETHEUS_RETENTION_TIME:-30d}
     ports:
-      - "${PROMETHEUS_PORT:-9999}:9090"
+      - "127.0.0.1:${PROMETHEUS_PORT:-9999}:9090"
     volumes:
       - prometheus_data:/prometheus
-      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ${PROMETHEUS_CONFIG_FILE:-./prometheus/prometheus.dev.yml}:/etc/prometheus/prometheus.yml:ro
       - ./prometheus/rules:/etc/prometheus/rules:ro
     networks:
       - monitoring
@@ -26,6 +41,8 @@ services:
       options:
         max-size: 10m
         max-file: "3"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   alertmanager:
     image: prom/alertmanager:v0.32.0
@@ -77,7 +94,7 @@ services:
         max-file: "3"
 
   cadvisor:
-    image: gcr.io/cadvisor/cadvisor:v0.56.2
+    image: ghcr.io/google/cadvisor:0.56.2
     container_name: cadvisor
     restart: unless-stopped
     expose:

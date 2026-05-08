@@ -32,7 +32,8 @@ This is suitable as a single-host Docker Compose deployment. If you need HA, SSO
 ## Files
 
 - `docker-compose.yml`: service definitions
-- `prometheus/prometheus.yml`: scrape and alertmanager config
+- `prometheus/prometheus.dev.yml`: development scrape config
+- `prometheus/prometheus.prod.yml`: production scrape config
 - `prometheus/rules/`: baseline alert rules
 - `alertmanager/config.yml`: alert routing
 - `grafana/provisioning/`: auto-provisioned Grafana datasource and dashboards
@@ -47,6 +48,34 @@ cp .env.example .env
 ```
 
 2. Edit `.env` and set a strong `GRAFANA_ADMIN_PASSWORD`.
+   For local development, keep `PROMETHEUS_CONFIG_FILE=./prometheus/prometheus.dev.yml`.
+   For production, switch it to `PROMETHEUS_CONFIG_FILE=./prometheus/prometheus.prod.yml`.
+   Set `PROMETHEUS_APP_KEY` to the bearer token expected by `runbunny-api`.
+
+The Prometheus target is selected by choosing which config file to mount:
+
+- `prometheus.dev.yml` scrapes `runbunny-api` from `http://host.docker.internal:3000/metrics`
+- `prometheus.prod.yml` scrapes `runbunny-api` from `https://gorunbunny.com/metrics`
+- both configs send `Authorization: Bearer <PROMETHEUS_APP_KEY>` via a runtime-only token file inside the Prometheus container
+
+`docker-compose.yml` mounts the selected file through:
+
+```yaml
+- ${PROMETHEUS_CONFIG_FILE:-./prometheus/prometheus.dev.yml}:/etc/prometheus/prometheus.yml:ro
+```
+
+That means the normal workflow is:
+
+- local laptop: use `.env` with `PROMETHEUS_CONFIG_FILE=./prometheus/prometheus.dev.yml`
+- production server: use `.env` with `PROMETHEUS_CONFIG_FILE=./prometheus/prometheus.prod.yml`
+
+After changing `PROMETHEUS_CONFIG_FILE`, restart Prometheus so the new file is mounted:
+
+```bash
+docker compose up -d prometheus
+```
+
+Prometheus will refuse to start if `PROMETHEUS_APP_KEY` is unset, because the `runbunny-api` scrape now requires bearer authentication.
 
 3. Start the stack:
 
@@ -65,6 +94,12 @@ Validate the compose file:
 
 ```bash
 docker compose config
+```
+
+Check which Prometheus config file Compose selected:
+
+```bash
+docker compose config | rg "/etc/prometheus/prometheus.yml" -B 2
 ```
 
 Show container status:
