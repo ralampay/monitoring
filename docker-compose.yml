@@ -9,7 +9,7 @@ services:
     command:
       - |
         umask 077
-        token_file=/tmp/runbunny-api-token
+        token_file=/tmp/prometheus-app-key
         if [ -z "$${PROMETHEUS_APP_KEY:-}" ]; then
           echo "PROMETHEUS_APP_KEY is required for runbunny-api scraping" >&2
           exit 1

@@ -38,7 +38,7 @@ scrape_configs:
     metrics_path: /metrics
     authorization:
       type: Bearer
-      credentials_file: /tmp/runbunny-api-token
+      credentials_file: /tmp/prometheus-app-key
     static_configs:
       - targets:
           - gorunbunny.com

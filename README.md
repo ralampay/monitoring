@@ -56,7 +56,7 @@ The Prometheus target is selected by choosing which config file to mount:
 
 - `prometheus.dev.yml` scrapes `runbunny-api` from `http://host.docker.internal:3000/metrics`
 - `prometheus.prod.yml` scrapes `runbunny-api` from `https://gorunbunny.com/metrics`
-- both configs send `Authorization: Bearer <PROMETHEUS_APP_KEY>` via a runtime-only token file inside the Prometheus container
+- both configs send `Authorization: Bearer <PROMETHEUS_APP_KEY>` via `/tmp/prometheus-app-key` inside the Prometheus container
 
 `docker-compose.yml` mounts the selected file through:
 
