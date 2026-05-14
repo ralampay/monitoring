@@ -52,3 +52,19 @@ scrape_configs:
     static_configs:
       - targets:
           - surveyengineapi-dev.abctechph.com
+
+  - job_name: pis-api
+    scheme: https
+    metrics_path: /metrics
+    authorization:
+      type: Bearer
+      credentials_file: /tmp/prometheus-app-key
+    static_configs:
+      - targets:
+          - bni-pis-api.cloudbandsolutions.com
+        labels:
+          app_name: pis_bni
+      - targets:
+          - merfolk-pis-api.cloudbandsolutions.com
+        labels:
+          app_name: pis_merfolk
